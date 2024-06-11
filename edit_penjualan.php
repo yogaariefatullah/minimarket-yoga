@@ -12,23 +12,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $jumlah = $_POST['jumlah'];
 
     // Ambil harga produk dan id produk dari penjualan
-    $stmt = $pdo->prepare("SELECT produk_id, (SELECT harga FROM produk WHERE id = penjualan.produk_id) as harga FROM penjualan WHERE id = ?");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("SELECT produk_id, (SELECT harga FROM produk WHERE id = penjualan.produk_id) as harga, (SELECT jumlah FROM penjualan WHERE id = ?) as jumlah_penjualan FROM penjualan WHERE id = ?");
+    $stmt->execute([$id, $id]);
     $penjualan = $stmt->fetch();
 
     if ($penjualan) {
-        $total = $penjualan['harga'] * $jumlah;
+        // Hitung stok saat ini setelah pengurangan penjualan yang lama dan penambahan penjualan yang baru
+        $stok_sekarang = $penjualan['jumlah_penjualan'] + (int)$penjualan['jumlah'] - (int)$jumlah;
 
-        // Update penjualan
-        $stmt = $pdo->prepare("UPDATE penjualan SET jumlah = ?, total = ? WHERE id = ?");
-        $stmt->execute([$jumlah, $total, $id]);
+        // Ambil stok saat ini dari produk
+        $stmt_stok = $pdo->prepare("SELECT stok FROM produk WHERE id = ?");
+        $stmt_stok->execute([$penjualan['produk_id']]);
+        $produk = $stmt_stok->fetch();
 
-        // Update stok produk
-        $stmt = $pdo->prepare("UPDATE produk SET stok = stok + (SELECT jumlah FROM penjualan WHERE id = ?) - ? WHERE id = ?");
-        $stmt->execute([$id, $jumlah, $penjualan['produk_id']]);
+        if ($produk && $stok_sekarang <= $produk['stok']) {
+            $total = $penjualan['harga'] * $jumlah;
 
-        echo "Penjualan berhasil diupdate!";
-        header("Location: daftar_penjualan.php");
+            // Update penjualan
+            $stmt_update_penjualan = $pdo->prepare("UPDATE penjualan SET jumlah = ?, total = ? WHERE id = ?");
+            $stmt_update_penjualan->execute([$jumlah, $total, $id]);
+
+            // Update stok produk
+            $stmt_update_stok_produk = $pdo->prepare("UPDATE produk SET stok = stok + ? WHERE id = ?");
+            $stmt_update_stok_produk->execute([$penjualan['jumlah_penjualan'] - $jumlah, $penjualan['produk_id']]);
+
+            echo "Penjualan berhasil diupdate!";
+            header("Location: daftar_penjualan.php");
+            exit();
+        } else {
+            echo "Gagal mengupdate penjualan. Stok tidak mencukupi.";
+        }
     } else {
         echo "Penjualan tidak ditemukan!";
     }
@@ -51,8 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center">Edit Penjualan
-        </h1>
+        <h1 class="text-center">Edit Penjualan</h1>
         <form method="post">
             <input type="hidden" name="id" value="<?php echo $id; ?>">
             <div class="form-group">
